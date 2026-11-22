@@ -6,6 +6,8 @@ The aim is simple: make it easy to find the right sound, know its licence, and g
 
 Be True, Be You, Be Blue!
 
+[Cerulean Blue Software](https://ceruleanbluesoftware.com) | Read me | [Change log](CHANGELOG.md)
+
 ## What it does
 
 - **Searches Freesound** with your own free Freesound API credentials. Results show each sound's length, licence and creator, play as previews, and download as the original file.
@@ -84,7 +86,15 @@ Nothing personal is kept in the program folder. Your settings, Freesound credent
 
 ## Status
 
-Version 0.2.0, an early release. It runs from Python for now. A smaller, installable version is planned.
+Version 0.2.0, an early release. It runs from Python for now. A smaller, installable version is planned. See the [change log](CHANGELOG.md) for what's new.
+
+## Feedback and contributions
+
+Issues and suggestions are welcome: open an issue on this repository. Cerulean Blue Software is a solo developer, so replies may take a little while.
+
+Accessibility reports are especially valued. If anything is hard to reach with a screen reader or the keyboard, or isn't announced clearly, please say so, and mention your screen reader.
+
+Pull requests are welcome too. Please keep everything usable by keyboard and screen reader, and describe how you tested that.
 
 ## Licence and credits
 
