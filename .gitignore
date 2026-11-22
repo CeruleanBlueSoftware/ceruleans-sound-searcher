@@ -1,0 +1,13 @@
+# Only the files listed below are shared. Everything else in this folder
+# (credentials, sign-in, indexes, downloads, reports, builds, notes) stays private.
+/*
+!/.gitignore
+!/LICENSE
+!/README.md
+!/requirements.txt
+!/sound_searcher.py
+!/sound_index.py
+!/settings.py
+!/audioset_labels.txt
+!/run sound searcher.bat
+!/index sounds.bat
