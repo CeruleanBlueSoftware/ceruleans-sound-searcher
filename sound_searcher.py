@@ -28,7 +28,7 @@ import pygame
 import settings as app_settings
 
 APP_NAME = "Cerulean's Sound Searcher"
-APP_VERSION = "0.3.0"
+APP_VERSION = "0.4.0"
 USER_AGENT = "CeruleansSoundSearcher/" + APP_VERSION
 
 LIBRARY_PAGE_SIZE = 50

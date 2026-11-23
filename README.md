@@ -23,11 +23,21 @@ Be True, Be You, Be Blue!
 ## Requirements
 
 - Windows 10 or later.
-- Python 3.12.
-- About 1 GB of disk space: about 200 MB for the Python packages and about 785 MB for the sound model.
+- About 1 GB of disk space: about 160 MB for the program and about 785 MB for the sound model.
 - A screen reader is optional; speech goes through your screen reader when one is running, using accessible_output2.
 
-## Setting up
+## Installing
+
+Download from the [latest release](https://github.com/CeruleanBlueSoftware/ceruleans-sound-searcher/releases/latest):
+
+- **setup ceruleans sound searcher.exe**, the installer. It installs for you alone, with no administrator prompt, into AppData\Roaming\Cerulean Blue Software\Cerulean's Sound Searcher\program, and adds the program to the Start menu. Uninstalling keeps your settings, index, notes and downloads.
+- **ceruleans sound searcher.zip**, which runs from wherever you extract it. Run "Cerulean's Sound Searcher.exe" from the extracted folder.
+
+You don't need Python to use either.
+
+## Running from source
+
+For developers who'd rather run the Python code, with Python 3.12:
 
 1. Download or clone this repository into a folder.
 2. Open a command prompt in that folder and create a virtual environment called .win:
@@ -43,6 +53,8 @@ Be True, Be You, Be Blue!
 	```
 
 4. Open "run sound searcher.bat" to start the app.
+
+To build the program yourself, install Nuitka into the same environment (`.win\Scripts\pip install nuitka`) and run sound.bat. Then package.bat makes the installer and the zip in the output folder; it needs [Inno Setup 6](https://jrsoftware.org/isinfo.php).
 
 The first time it opens, a short setup asks for your Freesound credentials, your folders of sounds and where downloads go, then offers to index your library. You can skip any step and change everything later in Settings (F2), or run the setup again from the File menu.
 
@@ -97,7 +109,7 @@ Settings can also choose a different index file, start a new one, or back up the
 
 ## Status
 
-Version 0.3.0, an early release. It runs from Python for now. A smaller, installable version is planned. See the [change log](CHANGELOG.md) for what's new.
+Version 0.4.0. Install it as described under Installing, or run it from Python as described under Running from source. See the [change log](CHANGELOG.md) for what's new.
 
 ## Feedback and contributions
 

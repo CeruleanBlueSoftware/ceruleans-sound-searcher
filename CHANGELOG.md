@@ -4,7 +4,7 @@ Be True, Be You, Be Blue!
 
 [Cerulean Blue Software](https://ceruleanbluesoftware.com) | [Read me](README.md) | Change log
 
-## Coming in version 0.4.0
+## Version 0.4.0, 22 November 2026
 
 ### Changed
 
