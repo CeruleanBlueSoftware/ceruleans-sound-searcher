@@ -16,7 +16,6 @@ import settings as app_settings
 APP_FOLDER = Path(sys.argv[0] if getattr(sys, "frozen", False) else __file__).resolve().parent
 LABELS_FILE = APP_FOLDER / "audioset_labels.txt"
 
-MODEL_NAME = "laion/larger_clap_general"
 MODEL_RATE = 48000
 PIECE_SECONDS = 10
 MAX_PIECES = 12
@@ -109,35 +108,22 @@ def like_prefix(text):
 	return text.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
 
 
-class ClapModel:
-	"""The CLAP model, which turns sounds and text into comparable embeddings."""
+class ModelMissing(Exception):
+	"""The sound model hasn't been downloaded yet."""
 
-	def __init__(self):
-		"""Load the model and its processor (downloaded once, then read from the cache)."""
-		import torch
-		from transformers import ClapModel as HuggingFaceClap, ClapProcessor
-		self.torch = torch
-		self.model = HuggingFaceClap.from_pretrained(MODEL_NAME).eval()
-		self.processor = ClapProcessor.from_pretrained(MODEL_NAME)
 
-	def as_array(self, features):
-		"""Turn the model's output into unit-length numpy rows."""
-		if not self.torch.is_tensor(features):
-			features = features.pooler_output
-		features = self.torch.nn.functional.normalize(features, dim=-1)
-		return features.numpy().astype(np.float32)
+def model_ready():
+	"""True when the sound model's files are all downloaded."""
+	import model_download
+	return not model_download.missing_files(app_settings.MODEL_FOLDER)
 
-	def embed_audio(self, pieces):
-		"""Embed a list of mono 48 kHz pieces, each up to 10 seconds."""
-		with self.torch.inference_mode():
-			inputs = self.processor(audio=pieces, sampling_rate=MODEL_RATE, return_tensors="pt")
-			return self.as_array(self.model.get_audio_features(**inputs))
 
-	def embed_text(self, texts):
-		"""Embed a list of descriptions."""
-		with self.torch.inference_mode():
-			inputs = self.processor(text=texts, return_tensors="pt", padding=True)
-			return self.as_array(self.model.get_text_features(**inputs))
+def load_model():
+	"""Load the sound model from its folder, raising ModelMissing if it isn't downloaded yet."""
+	import clap_onnx
+	if not model_ready():
+		raise ModelMissing("The sound model isn't downloaded yet.")
+	return clap_onnx.ClapModel(app_settings.MODEL_FOLDER)
 
 
 def read_audio(path):
@@ -397,7 +383,7 @@ def build_index(settings=None, only=None, report=print, should_stop=lambda: Fals
 	if to_do:
 		if model is None:
 			report("Loading the sound model...")
-			model = ClapModel()
+			model = load_model()
 		label_names, label_embeddings = load_labels(model)
 		for number, (key, path, stat) in enumerate(to_do, 1):
 			if should_stop():
@@ -519,7 +505,7 @@ class SoundIndex:
 	def ensure_model(self):
 		"""Load the CLAP model the first time a description search needs it."""
 		if self.model is None:
-			self.model = ClapModel()
+			self.model = load_model()
 		return self.model
 
 	def best_scores(self, query_embedding):
@@ -621,4 +607,8 @@ class SoundIndex:
 
 
 if __name__ == "__main__":
+	if not model_ready():
+		import model_download
+		print(f"Downloading the sound model, {model_download.download_size_text()}. This happens once.", flush=True)
+		model_download.download_model(app_settings.MODEL_FOLDER, report=lambda text: print(text, flush=True) if text.endswith("0 percent.") or "ready" in text else None)
 	build_index(report=lambda text: print(text, flush=True))

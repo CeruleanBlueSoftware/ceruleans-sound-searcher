@@ -12,7 +12,7 @@ Be True, Be You, Be Blue!
 
 - **Searches Freesound** with your own free Freesound API credentials. Results show each sound's length, licence and creator, play as previews, and download as the original file.
 - **Writes a credit file for every download**, with the credit line, licence, creator and link, and keeps a running CREDITS.txt in your downloads folder. CC0 sounds get credited too.
-- **Searches your own sound library by what the sounds actually sound like.** Type "heavy wooden door creaking" and the closest matches come first, even when the file names say nothing useful. This uses the CLAP audio model, which runs on your own computer.
+- **Searches your own sound library by what the sounds actually sound like.** Type "heavy wooden door creaking" and the closest matches come first, even when the file names say nothing useful. This uses the CLAP audio model, which runs on your own computer, with no internet needed once it's downloaded.
 - **Finds similar sounds** to the one you've picked.
 - **Takes your notes.** Describe a sound in your own words, such as "healing spell shimmer", and searches will find it by those words. You can add notes when downloading, or to any library sound.
 - **Keeps licences in view.** Every library sound shows its licence, read from credit files, Freesound pack readmes, or rules you set for whole folders. "Cleared licences only" hides anything that isn't allowed in a game you sell, or whose licence is unknown.
@@ -24,7 +24,7 @@ Be True, Be You, Be Blue!
 
 - Windows 10 or later.
 - Python 3.12.
-- About 3 GB of disk space for the Python packages and the sound model.
+- About 1 GB of disk space: about 200 MB for the Python packages and about 785 MB for the sound model.
 - A screen reader is optional; speech goes through your screen reader when one is running, using accessible_output2.
 
 ## Setting up
@@ -46,7 +46,7 @@ Be True, Be You, Be Blue!
 
 The first time it opens, a short setup asks for your Freesound credentials, your folders of sounds and where downloads go, then offers to index your library. You can skip any step and change everything later in Settings (F2), or run the setup again from the File menu.
 
-The first library search or index downloads the CLAP model (about 600 MB) from Hugging Face. After that it works offline.
+The first time you search or index your library, the app offers to download the sound model, about 785 MB, from this repository's releases. It's downloaded once, checked, and kept in AppData\Local\Cerulean Blue Software\Cerulean's Sound Searcher\model. Searching Freesound works without it.
 
 ## Your Freesound credentials
 
@@ -112,5 +112,5 @@ Pull requests are welcome too. Please keep everything usable by keyboard and scr
 The code is released under the MIT licence; see LICENSE. The Cerulean Blue Software name and logo are not covered by that licence.
 
 - Sounds and data come from [Freesound](https://freesound.org), through its API. Cerulean's Sound Searcher is not made by or affiliated with Freesound.
-- Library search uses LAION's CLAP model, [laion/larger_clap_general](https://huggingface.co/laion/larger_clap_general), under the Apache 2.0 licence.
+- Library search uses LAION's CLAP model, [laion/larger_clap_general](https://huggingface.co/laion/larger_clap_general), under the Apache 2.0 licence. The app downloads it converted to ONNX format, with its weights unchanged; tools/make_model_files.py shows how the files were made, and MODEL_LICENSE.txt comes with them. It runs with [ONNX Runtime](https://onnxruntime.ai).
 - The sound labels (audioset_labels.txt) are the category names of Google's [AudioSet ontology](https://research.google.com/audioset/ontology/index.html), under the Creative Commons Attribution 4.0 licence.

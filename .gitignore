@@ -10,6 +10,9 @@
 !/sound_searcher.py
 !/sound_index.py
 !/settings.py
+!/clap_onnx.py
+!/model_download.py
+!/tools/
 !/audioset_labels.txt
 !/run sound searcher.bat
 !/index sounds.bat

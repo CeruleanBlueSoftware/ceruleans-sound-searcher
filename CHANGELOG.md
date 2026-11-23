@@ -4,6 +4,13 @@ Be True, Be You, Be Blue!
 
 [Cerulean Blue Software](https://ceruleanbluesoftware.com) | [Read me](README.md) | Change log
 
+## Coming in version 0.4.0
+
+### Changed
+
+- The sound model now runs with ONNX Runtime instead of PyTorch, so the app needs about 200 MB of packages instead of about 3 GB. Search results are exactly the same, and existing indexes keep working.
+- The sound model is downloaded once, with spoken progress, the first time you search or index your library, instead of being fetched from Hugging Face. You can stop the download and carry on later.
+
 ## Version 0.3.0, 22 November 2026
 
 The first public release: easier to start with, and tools for filing sounds and gathering credits.

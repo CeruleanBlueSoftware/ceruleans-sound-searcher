@@ -1,9 +1,8 @@
---extra-index-url https://download.pytorch.org/whl/cpu
 wxPython==4.3.2
 pygame-ce==2.5.8
 accessible_output2==0.17
 numpy==2.5.4
-torch==2.15.0
-transformers==5.24.0
+onnxruntime==1.32.0
+tokenizers==0.23.3
 soundfile==0.14.0
 soxr==1.1.0

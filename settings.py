@@ -7,6 +7,7 @@ from pathlib import Path
 SETTINGS_FOLDER = Path(os.environ.get("APPDATA") or Path.home() / ".config") / "Cerulean Blue Software" / "Cerulean's Sound Searcher"
 SETTINGS_FILE = SETTINGS_FOLDER / "settings.json"
 TOKEN_FILE = SETTINGS_FOLDER / "oauth_token.json"
+MODEL_FOLDER = Path(os.environ.get("LOCALAPPDATA") or Path.home() / ".cache") / "Cerulean Blue Software" / "Cerulean's Sound Searcher" / "model"
 CREDENTIALS_PAGE = "https://freesound.org/apiv2/apply"
 
 LICENCE_CHOICES = [

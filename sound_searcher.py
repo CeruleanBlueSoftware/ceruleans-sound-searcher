@@ -1157,6 +1157,8 @@ class MainWindow(wx.Frame):
 		self.stop_indexing = False
 		self.lookup_running = False
 		self.stop_lookup = False
+		self.downloading_model = False
+		self.stop_download = False
 		self.credits_list = load_credits_list()
 
 		panel = wx.Panel(self)
@@ -1564,6 +1566,9 @@ class MainWindow(wx.Frame):
 	def start_indexing(self, only=None, finished=None):
 		"""Index the library (or one folder of it) on another thread, saying how it's going; then call finished()."""
 		import sound_index
+		if not sound_index.model_ready():
+			self.ensure_model_then(lambda: self.start_indexing(only, finished))
+			return
 		self.indexing = True
 		self.stop_indexing = False
 		self.set_status("Updating the library index...")
@@ -1588,6 +1593,61 @@ class MainWindow(wx.Frame):
 			wx.CallAfter(self.indexing_finished, outcome, only, finished)
 
 		threading.Thread(target=work, daemon=True).start()
+
+	def ensure_model_then(self, action):
+		"""Do action() once the sound model is downloaded, offering to download it first if it isn't."""
+		import model_download
+		import sound_index
+		if sound_index.model_ready():
+			action()
+			return
+		if self.downloading_model:
+			if wx.MessageBox("Stop downloading the sound model? You can download it later.", APP_NAME, wx.YES_NO, self) == wx.YES:
+				self.stop_download = True
+			return
+		answer = wx.MessageBox(
+			f"Searching and indexing your library need the sound model, a one-time download of {model_download.download_size_text()}. "
+			"It's kept in your AppData folder. Download it now? You can search Freesound meanwhile.",
+			APP_NAME, wx.YES_NO, self,
+		)
+		if answer != wx.YES:
+			self.set_status("The sound model wasn't downloaded. Library search and indexing need it.")
+			return
+		self.downloading_model = True
+		self.stop_download = False
+		progress = {"last spoken": 0.0}
+
+		def report(text):
+			"""Show each progress message, and say one about every 30 seconds."""
+			now = time.time()
+			spoken = now - progress["last spoken"] > 30 or "ready" in text
+			if spoken:
+				progress["last spoken"] = now
+			wx.CallAfter(self.set_status, text, spoken)
+
+		def work():
+			"""Download the model and pass back any error."""
+			try:
+				model_download.download_model(app_settings.MODEL_FOLDER, report, lambda: self.stop_download)
+				outcome = None
+			except Exception as error:
+				outcome = error
+			wx.CallAfter(self.model_downloaded, outcome, action)
+
+		threading.Thread(target=work, daemon=True).start()
+
+	def model_downloaded(self, outcome, action):
+		"""Carry on with what needed the model, or say why the download didn't finish."""
+		import model_download
+		self.downloading_model = False
+		if isinstance(outcome, model_download.DownloadStopped):
+			self.set_status("The sound model download was stopped. What was downloaded is kept for next time.")
+		elif outcome is not None:
+			message = f"The sound model didn't download: {outcome}. Check your internet connection and try again."
+			self.set_status(message, spoken=False)
+			wx.MessageBox(message, APP_NAME, wx.OK | wx.ICON_WARNING, self)
+		else:
+			action()
 
 	def indexing_finished(self, outcome, only, finished):
 		"""Say how the index update went."""
@@ -1673,7 +1733,7 @@ class MainWindow(wx.Frame):
 		if self.library_mode():
 			self.library_request = ("search", query)
 			self.library_limit = LIBRARY_PAGE_SIZE
-			self.fetch_library()
+			self.ensure_model_then(self.fetch_library)
 		else:
 			self.fetch_page()
 
@@ -2216,9 +2276,11 @@ class MainWindow(wx.Frame):
 		self.sound_index = None
 		self.fill_library_choice()
 		self.downloaded_ids = self.read_downloaded_ids()
-		if answer == wx.OK and self.settings["libraries"] and wx.MessageBox(
-			"Index your library now? The sound model downloads once, about 600 MB, and a big library takes a while. "
-			"You can search Freesound meanwhile, and press Ctrl+U to stop.",
+		import sound_index
+		if answer == wx.OK and self.settings["libraries"] and not sound_index.model_ready():
+			self.start_indexing()
+		elif answer == wx.OK and self.settings["libraries"] and wx.MessageBox(
+			"Index your library now? A big library takes a while. You can search Freesound meanwhile, and press Ctrl+U to stop.",
 			"Setup", wx.YES_NO, self,
 		) == wx.YES:
 			self.start_indexing()
