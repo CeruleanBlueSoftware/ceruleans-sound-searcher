@@ -8,6 +8,7 @@ import json
 import os
 import re
 import secrets
+import shutil
 import subprocess
 import sys
 import threading
@@ -27,11 +28,13 @@ import pygame
 import settings as app_settings
 
 APP_NAME = "Cerulean's Sound Searcher"
-APP_VERSION = "0.2.0"
+APP_VERSION = "0.3.0"
 USER_AGENT = "CeruleansSoundSearcher/" + APP_VERSION
 
 LIBRARY_PAGE_SIZE = 50
 SEARCH_PLACES = ["Freesound", "My library"]
+ALL_LIBRARIES = "All libraries"
+CREDITS_LIST_FILE = app_settings.SETTINGS_FOLDER / "credits list.json"
 
 API_ROOT = "https://freesound.org/apiv2/"
 SEARCH_URL = API_ROOT + "search/"
@@ -81,6 +84,9 @@ KEYS_HELP = (
 	"Escape: stop the sound.\n"
 	"Ctrl+D: download the selected Freesound sound with its credit, and notes if you add them.\n"
 	"Ctrl+M: find library sounds like the selected one.\n"
+	"Ctrl+U: update the library index, or stop an update.\n"
+	"Ctrl+K: add the selected sound's credit to the credits list; the File menu shows, saves or clears it.\n"
+	"Ctrl+Shift+A: move the selected download, with its credit file, into a library folder.\n"
 	"Ctrl+E: edit the selected library sound's notes.\n"
 	"Ctrl+N: load more results.\n"
 	"Ctrl+O: open the sound's Freesound page, or for a library sound, its folder.\n"
@@ -654,6 +660,115 @@ class SignInDialog(wx.Dialog):
 		return super().Destroy()
 
 
+def count(number, word):
+	"""Say a number with its word, singular for one: 1 sound, 2 sounds."""
+	return f"{number} {word}" if number == 1 else f"{number} {word}s"
+
+
+def load_credits_list():
+	"""The credit lines gathered so far, kept between sessions in the settings folder."""
+	try:
+		return list(json.loads(CREDITS_LIST_FILE.read_text(encoding="utf-8")))
+	except (OSError, json.JSONDecodeError, TypeError):
+		return []
+
+
+def save_credits_list(credits):
+	"""Keep the credits list in the settings folder."""
+	CREDITS_LIST_FILE.parent.mkdir(parents=True, exist_ok=True)
+	CREDITS_LIST_FILE.write_text(json.dumps(credits, indent="\t"), encoding="utf-8")
+
+
+def ask_library_name(parent, settings, suggestion, ignore=None):
+	"""Ask for a library's short name, which must be unique and can't contain a slash; None if cancelled."""
+	taken = {library["name"].lower() for library in settings["libraries"]} - {(ignore or "").lower()}
+	while True:
+		dialog = wx.TextEntryDialog(parent, "A short name for this library, shown with its sounds:", "Library name", value=suggestion)
+		answer = dialog.ShowModal()
+		name = " ".join(dialog.GetValue().split()).replace("/", " ").replace("\\", " ").strip()
+		dialog.Destroy()
+		if answer != wx.ID_OK:
+			return None
+		if not name:
+			continue
+		if name.lower() in taken:
+			wx.MessageBox(f"There's already a library called {name}.", APP_NAME, wx.OK, parent)
+			suggestion = name
+			continue
+		return name
+
+
+def choose_library_folder(parent, settings):
+	"""Ask for a folder of sounds and a name for it; return the new library, or None if cancelled or it overlaps another."""
+	dialog = wx.DirDialog(parent, "Choose a folder of sounds")
+	answer = dialog.ShowModal()
+	folder = Path(dialog.GetPath()).resolve()
+	dialog.Destroy()
+	if answer != wx.ID_OK:
+		return None
+	for library in settings["libraries"]:
+		existing = Path(library["folder"]).resolve()
+		if folder == existing or existing in folder.parents or folder in existing.parents:
+			wx.MessageBox(f"That folder overlaps the library {library['name']}, at {library['folder']}.", APP_NAME, wx.OK, parent)
+			return None
+	name = ask_library_name(parent, settings, folder.name)
+	return {"name": name, "folder": str(folder)} if name else None
+
+
+class TextViewDialog(wx.Dialog):
+	"""Shows some text in a read-only box that a screen reader can review line by line."""
+
+	def __init__(self, parent, title, label, text):
+		"""Build the dialog with the text and a Close button."""
+		super().__init__(parent, title=title, size=(640, 460), style=wx.DEFAULT_DIALOG_STYLE | wx.RESIZE_BORDER)
+		text_label = wx.StaticText(self, label=label)
+		box = wx.TextCtrl(self, value=text, style=wx.TE_MULTILINE | wx.TE_READONLY | wx.TE_RICH2)
+		buttons = self.CreateStdDialogButtonSizer(wx.CLOSE)
+		sizer = wx.BoxSizer(wx.VERTICAL)
+		sizer.Add(text_label, 0, wx.LEFT | wx.RIGHT | wx.TOP, 10)
+		sizer.Add(box, 1, wx.EXPAND | wx.ALL, 10)
+		sizer.Add(buttons, 0, wx.EXPAND | wx.ALL, 10)
+		self.SetSizer(sizer)
+		self.Bind(wx.EVT_BUTTON, lambda event: self.EndModal(wx.ID_CLOSE), id=wx.ID_CLOSE)
+		self.SetEscapeId(wx.ID_CLOSE)
+		box.SetInsertionPoint(0)
+		box.SetFocus()
+
+
+class CredentialsDialog(wx.Dialog):
+	"""The first-run step that asks for the user's own Freesound API credentials."""
+
+	def __init__(self, parent, settings):
+		"""Build the dialog, filled in with any credentials already saved."""
+		super().__init__(parent, title="Freesound credentials")
+		explanation = wx.StaticText(self, label=(
+			"To search and download from Freesound, you need your own Freesound API credentials. They're free: "
+			"press Get credentials, sign in to Freesound, and apply. For the callback address, enter "
+			f"{CALLBACK_ADDRESS} so signing in finishes by itself. Then paste the client ID and client secret here.\n\n"
+			"Press Skip to do this later in Settings. Searching your own library works without them."
+		))
+		explanation.Wrap(480)
+		id_label = wx.StaticText(self, label="Client &ID:")
+		self.id_box = wx.TextCtrl(self, value=settings["freesound_client_id"])
+		secret_label = wx.StaticText(self, label="Client s&ecret:")
+		self.secret_box = wx.TextCtrl(self, value=settings["freesound_client_secret"])
+		get_button = wx.Button(self, label="&Get credentials")
+		next_button = wx.Button(self, wx.ID_OK, label="&Next")
+		skip_button = wx.Button(self, wx.ID_CANCEL, label="&Skip")
+		buttons = wx.BoxSizer(wx.HORIZONTAL)
+		buttons.Add(next_button, 0, wx.RIGHT, 6)
+		buttons.Add(skip_button, 0)
+		sizer = wx.BoxSizer(wx.VERTICAL)
+		sizer.Add(explanation, 0, wx.ALL, 10)
+		for control in (id_label, self.id_box, secret_label, self.secret_box, get_button):
+			sizer.Add(control, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.TOP, 10)
+		sizer.Add(buttons, 0, wx.ALL, 10)
+		self.SetSizerAndFit(sizer)
+		get_button.Bind(wx.EVT_BUTTON, lambda event: webbrowser.open(app_settings.CREDENTIALS_PAGE))
+		next_button.SetDefault()
+		self.id_box.SetFocus()
+
+
 class LicenceRuleDialog(wx.Dialog):
 	"""Adds or edits one folder licence rule: where a folder's sounds came from and how they may be used."""
 
@@ -783,9 +898,21 @@ class SettingsDialog(wx.Dialog):
 		library_buttons = wx.BoxSizer(wx.HORIZONTAL)
 		for button in (add_library_button, rename_library_button, remove_library_button):
 			library_buttons.Add(button, 0, wx.RIGHT, 6)
+		index_label = wx.StaticText(box, label="Inde&x file, which also holds your notes:")
+		self.index_box = wx.TextCtrl(box, value=self.settings["index_file"], style=wx.TE_READONLY)
+		choose_index_button = wx.Button(box, label="&Choose index...")
+		new_index_button = wx.Button(box, label="Ne&w index...")
+		backup_index_button = wx.Button(box, label="Back u&p index...")
+		index_buttons = wx.BoxSizer(wx.HORIZONTAL)
+		for button in (choose_index_button, new_index_button, backup_index_button):
+			index_buttons.Add(button, 0, wx.RIGHT, 6)
 		for control in (downloads_label, self.downloads_box, browse_button, libraries_label, self.libraries_list):
 			folders_box.Add(control, 0, wx.EXPAND | wx.ALL, 4)
 		folders_box.Add(library_buttons, 0, wx.ALL, 4)
+		folders_box.Add(index_label, 0, wx.EXPAND | wx.ALL, 4)
+		folders_box.Add(self.index_box, 0, wx.EXPAND | wx.ALL, 4)
+		folders_box.Add(index_buttons, 0, wx.ALL, 4)
+		self.original_index = self.settings["index_file"]
 
 		rules_box = wx.StaticBoxSizer(wx.VERTICAL, self, "Licence rules")
 		box = rules_box.GetStaticBox()
@@ -820,6 +947,9 @@ class SettingsDialog(wx.Dialog):
 		add_library_button.Bind(wx.EVT_BUTTON, self.on_add_library)
 		rename_library_button.Bind(wx.EVT_BUTTON, self.on_rename_library)
 		remove_library_button.Bind(wx.EVT_BUTTON, self.on_remove_library)
+		choose_index_button.Bind(wx.EVT_BUTTON, self.on_choose_index)
+		new_index_button.Bind(wx.EVT_BUTTON, self.on_new_index)
+		backup_index_button.Bind(wx.EVT_BUTTON, self.on_backup_index)
 		add_rule_button.Bind(wx.EVT_BUTTON, self.on_add_rule)
 		edit_rule_button.Bind(wx.EVT_BUTTON, self.on_edit_rule)
 		remove_rule_button.Bind(wx.EVT_BUTTON, self.on_remove_rule)
@@ -858,42 +988,70 @@ class SettingsDialog(wx.Dialog):
 		dialog.Destroy()
 		self.downloads_box.SetFocus()
 
-	def ask_library_name(self, suggestion, ignore=None):
-		"""Ask for a library's short name, which must be unique and can't contain a slash; None if cancelled."""
-		taken = {library["name"].lower() for library in self.settings["libraries"]} - {(ignore or "").lower()}
-		while True:
-			dialog = wx.TextEntryDialog(self, "A short name for this library, shown with its sounds:", "Library name", value=suggestion)
-			answer = dialog.ShowModal()
-			name = " ".join(dialog.GetValue().split()).replace("/", " ").replace("\\", " ").strip()
-			dialog.Destroy()
-			if answer != wx.ID_OK:
-				return None
-			if not name:
-				continue
-			if name.lower() in taken:
-				wx.MessageBox(f"There's already a library called {name}.", APP_NAME, wx.OK, self)
-				suggestion = name
-				continue
-			return name
-
 	def on_add_library(self, event):
 		"""Add a folder of sounds to the library."""
-		dialog = wx.DirDialog(self, "Choose a folder of sounds")
-		answer = dialog.ShowModal()
-		folder = Path(dialog.GetPath()).resolve()
-		dialog.Destroy()
-		if answer != wx.ID_OK:
-			return
-		for library in self.settings["libraries"]:
-			existing = Path(library["folder"]).resolve()
-			if folder == existing or existing in folder.parents or folder in existing.parents:
-				wx.MessageBox(f"That folder overlaps the library {library['name']}, at {library['folder']}.", APP_NAME, wx.OK, self)
-				return
-		name = self.ask_library_name(folder.name)
-		if name:
-			self.settings["libraries"].append({"name": name, "folder": str(folder)})
+		library = choose_library_folder(self, self.settings)
+		if library:
+			self.settings["libraries"].append(library)
 			self.fill_libraries(len(self.settings["libraries"]) - 1)
 		self.libraries_list.SetFocus()
+
+	def on_choose_index(self, event):
+		"""Use an existing index file."""
+		dialog = wx.FileDialog(
+			self, "Choose an index", str(Path(self.settings["index_file"]).parent), wildcard="Sound index (*.db)|*.db",
+			style=wx.FD_OPEN | wx.FD_FILE_MUST_EXIST,
+		)
+		if dialog.ShowModal() == wx.ID_OK:
+			import sound_index
+			try:
+				sound_index.check_index_file(dialog.GetPath())
+			except RuntimeError as error:
+				wx.MessageBox(str(error), APP_NAME, wx.OK | wx.ICON_WARNING, self)
+			else:
+				self.settings["index_file"] = dialog.GetPath()
+				self.index_box.SetValue(dialog.GetPath())
+		dialog.Destroy()
+		self.index_box.SetFocus()
+
+	def on_new_index(self, event):
+		"""Start a new, empty index in a file of the user's choosing; it's filled the next time the index is updated."""
+		dialog = wx.FileDialog(
+			self, "Name the new index", str(Path(self.settings["index_file"]).parent), "sound_index.db",
+			wildcard="Sound index (*.db)|*.db", style=wx.FD_SAVE,
+		)
+		if dialog.ShowModal() == wx.ID_OK:
+			path = Path(dialog.GetPath())
+			if path.exists():
+				wx.MessageBox(f"{path.name} already exists. Use Choose index to use it, or pick a new name.", APP_NAME, wx.OK, self)
+			else:
+				self.settings["index_file"] = str(path)
+				self.index_box.SetValue(str(path))
+				wx.MessageBox("The new index is empty. Update the library index (Ctrl+U) to fill it.", APP_NAME, wx.OK, self)
+		dialog.Destroy()
+		self.index_box.SetFocus()
+
+	def on_backup_index(self, event):
+		"""Copy the index in use to a file of the user's choosing."""
+		current = Path(self.original_index)
+		if not current.exists():
+			wx.MessageBox("There's no index to back up yet.", APP_NAME, wx.OK, self)
+			return
+		dialog = wx.FileDialog(
+			self, "Back up the index to", str(current.parent), f"sound_index backup {time.strftime('%Y-%m-%d')}.db",
+			wildcard="Sound index (*.db)|*.db", style=wx.FD_SAVE | wx.FD_OVERWRITE_PROMPT,
+		)
+		if dialog.ShowModal() == wx.ID_OK:
+			import sound_index
+			destination = Path(dialog.GetPath())
+			try:
+				destination.unlink(missing_ok=True)
+				sound_index.backup_index(dict(self.settings, index_file=str(current)), destination)
+				wx.MessageBox(f"Backed up to {destination.name}.", APP_NAME, wx.OK, self)
+			except Exception as error:
+				wx.MessageBox(f"The backup didn't work: {error}", APP_NAME, wx.OK | wx.ICON_WARNING, self)
+		dialog.Destroy()
+		self.index_box.SetFocus()
 
 	def on_rename_library(self, event):
 		"""Give the selected library a new short name."""
@@ -901,7 +1059,7 @@ class SettingsDialog(wx.Dialog):
 		if index == wx.NOT_FOUND:
 			return
 		library = self.settings["libraries"][index]
-		name = self.ask_library_name(library["name"], ignore=library["name"])
+		name = ask_library_name(self, self.settings, library["name"], ignore=library["name"])
 		if name and name != library["name"]:
 			for rule in self.settings["licence_rules"]:
 				if rule["folder"] == library["name"] or rule["folder"].startswith(library["name"] + "/"):
@@ -992,8 +1150,14 @@ class MainWindow(wx.Frame):
 		self.playing_id = None
 		self.downloaded_ids = self.read_downloaded_ids()
 		self.sound_index = None
+		self.clap_model = None
 		self.library_request = None
 		self.library_limit = LIBRARY_PAGE_SIZE
+		self.indexing = False
+		self.stop_indexing = False
+		self.lookup_running = False
+		self.stop_lookup = False
+		self.credits_list = load_credits_list()
 
 		panel = wx.Panel(self)
 		search_label = wx.StaticText(panel, label="&Search for:")
@@ -1002,6 +1166,8 @@ class MainWindow(wx.Frame):
 		place_label = wx.StaticText(panel, label="Searc&h in:")
 		self.place_choice = wx.Choice(panel, choices=SEARCH_PLACES)
 		self.place_choice.SetSelection(0)
+		library_label = wx.StaticText(panel, label="Librar&y:")
+		self.library_choice = wx.Choice(panel)
 		self.cleared_box = wx.CheckBox(panel, label="&Cleared licences only")
 		self.cleared_box.SetValue(True)
 		length_label = wx.StaticText(panel, label="&Length:")
@@ -1028,6 +1194,8 @@ class MainWindow(wx.Frame):
 		filter_row = wx.BoxSizer(wx.HORIZONTAL)
 		filter_row.Add(place_label, 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 6)
 		filter_row.Add(self.place_choice, 0, wx.RIGHT, 18)
+		filter_row.Add(library_label, 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 6)
+		filter_row.Add(self.library_choice, 0, wx.RIGHT, 18)
 		filter_row.Add(length_label, 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 6)
 		filter_row.Add(self.length_choice, 0, wx.RIGHT, 18)
 		filter_row.Add(sort_label, 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 6)
@@ -1053,6 +1221,7 @@ class MainWindow(wx.Frame):
 
 		self.CreateStatusBar()
 		self.build_menus()
+		self.fill_library_choice()
 		self.show_place_controls()
 		self.update_buttons()
 
@@ -1071,6 +1240,8 @@ class MainWindow(wx.Frame):
 
 		self.set_status("Type what you're looking for and press Enter.", spoken=False)
 		self.search_box.SetFocus()
+		if self.settings["libraries"] and Path(self.settings["index_file"]).exists():
+			wx.CallLater(3000, self.check_for_new_sounds)
 
 	def build_menus(self):
 		"""Create the File, Sound and Help menus with their shortcut keys."""
@@ -1080,9 +1251,19 @@ class MainWindow(wx.Frame):
 		self.add_menu_item(file_menu, "Search F&reesound\tCtrl+1", lambda event: self.choose_place(0))
 		self.add_menu_item(file_menu, "Search my &library\tCtrl+2", lambda event: self.choose_place(1))
 		self.add_menu_item(file_menu, "Open &downloads folder\tCtrl+L", self.on_open_downloads)
-		self.add_menu_item(file_menu, "Look up &licences on Freesound...", self.on_lookup_licences)
+		self.add_menu_item(file_menu, "Move &all downloads to library...", self.on_move_downloads)
+		file_menu.AppendSeparator()
+		self.add_menu_item(file_menu, "&Update library index\tCtrl+U", self.on_update_index)
+		self.add_menu_item(file_menu, "Open index re&port", self.on_open_report)
+		self.add_menu_item(file_menu, "Look up licences &on Freesound...", self.on_lookup_licences)
+		file_menu.AppendSeparator()
+		self.add_menu_item(file_menu, "Show &credits list", self.on_show_credits)
+		self.add_menu_item(file_menu, "Sa&ve credits list...", self.on_save_credits)
+		self.add_menu_item(file_menu, "Cl&ear credits list", self.on_clear_credits)
+		file_menu.AppendSeparator()
 		self.add_menu_item(file_menu, "&Sign in to Freesound", self.on_sign_in)
 		self.add_menu_item(file_menu, "Se&ttings\tF2", self.on_settings)
+		self.add_menu_item(file_menu, "First-ti&me setup...", lambda event: self.run_first_setup())
 		file_menu.AppendSeparator()
 		self.add_menu_item(file_menu, "E&xit", lambda event: self.Close(), wx.ID_EXIT)
 		sound_menu = wx.Menu()
@@ -1092,6 +1273,8 @@ class MainWindow(wx.Frame):
 		self.add_menu_item(sound_menu, "&More results\tCtrl+N", self.on_more)
 		self.add_menu_item(sound_menu, "&Open Freesound page or folder\tCtrl+O", self.on_open_page)
 		self.add_menu_item(sound_menu, "&Copy credit line\tCtrl+Shift+C", self.on_copy_credit)
+		self.add_menu_item(sound_menu, "Add to credits lis&t\tCtrl+K", self.on_add_credit)
+		self.add_menu_item(sound_menu, "Add download to &library...\tCtrl+Shift+A", self.on_add_to_library)
 		help_menu = wx.Menu()
 		self.add_menu_item(help_menu, "&Keys\tF1", lambda event: wx.MessageBox(KEYS_HELP, "Keys", wx.OK, self))
 		self.add_menu_item(help_menu, "&About", self.on_about)
@@ -1139,7 +1322,20 @@ class MainWindow(wx.Frame):
 		self.notes_button.Show(library)
 		self.sort_choice.Enable(not library)
 		self.cleared_box.Enable(library)
+		self.library_choice.Enable(library)
 		self.panel.Layout()
+
+	def fill_library_choice(self):
+		"""List All libraries and each library by name in the Library box, keeping the choice if it still exists."""
+		current = self.library_choice.GetStringSelection()
+		names = [ALL_LIBRARIES] + [library["name"] for library in self.settings["libraries"]]
+		self.library_choice.Set(names)
+		self.library_choice.SetSelection(names.index(current) if current in names else 0)
+
+	def chosen_library(self):
+		"""The library name chosen in the Library box, or None for all of them."""
+		index = self.library_choice.GetSelection()
+		return None if index <= 0 else self.library_choice.GetString(index)
 
 	def choose_place(self, place):
 		"""Switch between searching Freesound and the library from the menu or keys."""
@@ -1216,7 +1412,7 @@ class MainWindow(wx.Frame):
 
 	def on_lookup_licences(self, event):
 		"""Look up the licences of library sounds named with Freesound numbers, writing a credit file beside each."""
-		if getattr(self, "lookup_running", False):
+		if self.lookup_running:
 			if wx.MessageBox("Stop looking up licences? What's been found so far is kept.", APP_NAME, wx.YES_NO, self) == wx.YES:
 				self.stop_lookup = True
 			return
@@ -1224,7 +1420,7 @@ class MainWindow(wx.Frame):
 			wx.MessageBox("Looking up licences needs your own Freesound API credentials. Add them in Settings (F2).", APP_NAME, wx.OK, self)
 			return
 		if not Path(self.settings["index_file"]).exists():
-			wx.MessageBox('Index your library first, with "index sounds.bat".', APP_NAME, wx.OK, self)
+			wx.MessageBox("Index your library first, with Update library index (Ctrl+U).", APP_NAME, wx.OK, self)
 			return
 		candidates = self.lookup_candidates()
 		if not candidates:
@@ -1318,6 +1514,9 @@ class MainWindow(wx.Frame):
 		"""Open the Settings window and put any changes into effect."""
 		if self.busy:
 			return
+		if self.indexing or self.lookup_running:
+			self.set_status("Settings can't be changed while the index is updating or licences are being looked up.")
+			return
 		old_client_id = self.client.client_id
 		old_libraries = {library["folder"]: library["name"] for library in self.settings["libraries"]}
 		dialog = SettingsDialog(self, self.settings)
@@ -1338,12 +1537,110 @@ class MainWindow(wx.Frame):
 				self.client.forget_sign_in()
 			self.sound_index = None
 			self.downloaded_ids = self.read_downloaded_ids()
+			self.fill_library_choice()
 			added = [library for library in new_settings["libraries"] if library["folder"] not in old_libraries]
-			message = "Settings saved."
-			if added:
-				message += ' Run "index sounds.bat" to index the new library folders.'
-			self.set_status(message)
+			dialog.Destroy()
+			if added and wx.MessageBox(
+				"Index the new library folders now? You can keep searching while it runs.", APP_NAME, wx.YES_NO, self,
+			) == wx.YES:
+				self.on_update_index(None)
+			else:
+				self.set_status("Settings saved." + (" Update the library index (Ctrl+U) to add the new folders." if added else ""))
+			return
 		dialog.Destroy()
+
+	def on_update_index(self, event):
+		"""Update the library index in the background, or offer to stop an update that's running."""
+		if self.indexing:
+			if wx.MessageBox("Stop updating the index? What's done so far is kept.", APP_NAME, wx.YES_NO, self) == wx.YES:
+				self.stop_indexing = True
+				self.set_status("Stopping after the current sound...")
+			return
+		if not self.settings["libraries"]:
+			wx.MessageBox("Add your sound folders in Settings (F2) first.", APP_NAME, wx.OK, self)
+			return
+		self.start_indexing()
+
+	def start_indexing(self, only=None, finished=None):
+		"""Index the library (or one folder of it) on another thread, saying how it's going; then call finished()."""
+		import sound_index
+		self.indexing = True
+		self.stop_indexing = False
+		self.set_status("Updating the library index...")
+		progress = {"last spoken": 0.0}
+
+		def report(text):
+			"""Show each progress message, and say one about once a minute."""
+			now = time.time()
+			spoken = now - progress["last spoken"] > 60 or "to index" in text
+			if spoken:
+				progress["last spoken"] = now
+			wx.CallAfter(self.set_status, text, spoken)
+
+		def work():
+			"""Run the indexer and pass its outcome back."""
+			try:
+				outcome = sound_index.build_index(
+					self.settings, only=only, report=report, should_stop=lambda: self.stop_indexing, model=self.clap_model,
+				)
+			except Exception as error:
+				outcome = error
+			wx.CallAfter(self.indexing_finished, outcome, only, finished)
+
+		threading.Thread(target=work, daemon=True).start()
+
+	def indexing_finished(self, outcome, only, finished):
+		"""Say how the index update went."""
+		self.indexing = False
+		if isinstance(outcome, Exception):
+			self.set_status(f"Updating the index didn't work: {outcome}")
+			wx.MessageBox(f"Updating the index didn't work: {outcome}", APP_NAME, wx.OK | wx.ICON_WARNING, self)
+			return
+		indexed, errors, stopped = outcome
+		self.downloaded_ids = self.read_downloaded_ids()
+		if only:
+			message = f"Added to the library and indexed: {count(indexed, 'sound')}."
+		elif stopped:
+			message = f"Index update stopped after {count(indexed, 'sound')}. Press Ctrl+U to carry on."
+		else:
+			message = f"Index updated: {count(indexed, 'sound')} indexed."
+		if errors:
+			message += f" {len(errors)} couldn't be read; they're listed in the index report."
+		self.set_status(message)
+		if finished:
+			finished()
+
+	def on_open_report(self, event):
+		"""Open the report from the last index update."""
+		import sound_index
+		report = sound_index.report_file(self.settings)
+		if report.exists():
+			wx.LaunchDefaultApplication(str(report))
+		else:
+			self.set_status("There's no index report yet. Update the library index (Ctrl+U) to make one.")
+
+	def check_for_new_sounds(self):
+		"""Look, in the background, for library sounds added, changed or removed since the last index update."""
+		import sound_index
+		if self.indexing:
+			return
+
+		def work():
+			"""Count the changes."""
+			return sound_index.pending_changes(self.settings)
+
+		def done(counts):
+			"""Mention the changes, if there are any."""
+			changed, gone = counts
+			if (changed or gone) and not self.indexing:
+				parts = []
+				if changed:
+					parts.append(f"{count(changed, 'new or changed sound')}")
+				if gone:
+					parts.append(f"{gone} removed")
+				self.set_status(f"Your library has {' and '.join(parts)} since it was indexed. Press Ctrl+U to update the index.")
+
+		self.run_in_background(work, done, lambda message: None)
 
 	def run_in_background(self, work, on_done, on_error):
 		"""Run work() on another thread, then call on_done(result) or on_error(message) on this one."""
@@ -1406,19 +1703,22 @@ class MainWindow(wx.Frame):
 		limit = self.library_limit
 		cleared_only = self.cleared_box.GetValue()
 		max_duration = DURATION_CHOICES[self.length_choice.GetSelection()][1]
+		library = self.chosen_library()
 
 		def work():
 			"""Load or refresh the index if needed, then search it."""
 			if self.sound_index is None or self.sound_index.is_stale():
-				model = self.sound_index.model if self.sound_index else None
-				self.sound_index = sound_index.SoundIndex(self.settings, model)
+				self.sound_index = sound_index.SoundIndex(self.settings, self.clap_model)
 			if not self.sound_index.paths:
 				if not self.settings["libraries"]:
-					raise FreesoundError("No library folders yet. Add your sound folders in Settings (F2), then index them.")
-				raise FreesoundError('The library index is empty. Run "index sounds.bat" first.')
-			if kind == "search":
-				return self.sound_index.search(value, limit, cleared_only, max_duration)
-			return self.sound_index.similar(value, limit, cleared_only, max_duration)
+					raise FreesoundError("No library folders yet. Add your sound folders in Settings (F2), then update the library index (Ctrl+U).")
+				raise FreesoundError("The library index is empty. Update it with Ctrl+U first.")
+			try:
+				if kind == "search":
+					return self.sound_index.search(value, limit, cleared_only, max_duration, library)
+				return self.sound_index.similar(value, limit, cleared_only, max_duration, library)
+			finally:
+				self.clap_model = self.sound_index.model
 
 		self.run_in_background(work, lambda results: self.show_library_results(results, limit), self.search_failed)
 
@@ -1758,6 +2058,174 @@ class MainWindow(wx.Frame):
 			wx.TheClipboard.Close()
 			self.set_status("Credit line copied.")
 
+	def downloaded_file(self, sound):
+		"""The downloaded file for a Freesound result, if it's in the downloads folder; otherwise None."""
+		if "path" in sound:
+			return None
+		path = self.downloads_folder() / safe_file_name(sound)
+		return path if path.exists() else None
+
+	def on_add_to_library(self, event):
+		"""Move the selected Freesound sound's download, with its credit file, into a library folder and index it."""
+		sound = self.selected_sound()
+		if not sound:
+			return
+		if "path" in sound:
+			self.set_status("This sound is already in your library.")
+			return
+		path = self.downloaded_file(sound)
+		if path is None:
+			self.set_status("This sound isn't in your downloads folder. Download it first with Ctrl+D.")
+			return
+		self.move_into_library([path])
+
+	def on_move_downloads(self, event):
+		"""Move every downloaded sound, with its credit file, into a library folder and index them."""
+		folder = self.downloads_folder()
+		import sound_index
+		paths = sorted(path for path in folder.iterdir() if path.is_file() and sound_index.is_sound_file(path)) if folder.is_dir() else []
+		if not paths:
+			self.set_status("There are no sounds in your downloads folder.")
+			return
+		self.move_into_library(paths)
+
+	def move_into_library(self, paths):
+		"""Ask for a library folder, move the sounds and their credit files there, and index that folder."""
+		if self.indexing:
+			self.set_status("Wait for the index update to finish first.")
+			return
+		if not self.settings["libraries"]:
+			wx.MessageBox("Add a library folder in Settings (F2) first.", APP_NAME, wx.OK, self)
+			return
+		dialog = wx.DirDialog(self, f"Choose the library folder to move {len(paths)} sounds into", self.settings["libraries"][0]["folder"])
+		answer = dialog.ShowModal()
+		target = Path(dialog.GetPath())
+		dialog.Destroy()
+		if answer != wx.ID_OK:
+			return
+		if app_settings.key_for(self.settings, target) is None:
+			wx.MessageBox("That folder isn't inside any of your library folders.", APP_NAME, wx.OK, self)
+			return
+		moved, skipped = [], []
+		for path in paths:
+			destination = target / path.name
+			if destination.exists():
+				skipped.append(path.name)
+				continue
+			shutil.move(str(path), str(destination))
+			credit = path.with_suffix(".txt")
+			if credit.exists() and not destination.with_suffix(".txt").exists():
+				shutil.move(str(credit), str(destination.with_suffix(".txt")))
+			moved.append(destination)
+		message = f"Moved {count(len(moved), 'sound')} into {target.name}."
+		if skipped:
+			message += f" Skipped {count(len(skipped), 'sound')}, because a file of the same name is already there."
+		self.set_status(message + " Indexing them..." if moved else message)
+		if moved:
+			self.start_indexing(only=target if len(moved) > 1 else moved[0])
+
+	def on_add_credit(self, event):
+		"""Add the selected sound's credit line to the credits list."""
+		sound = self.selected_sound()
+		if not sound:
+			return
+		credit = (sound.get("credit") or "") if "path" in sound else make_credit_line(sound)
+		if not credit:
+			self.set_status("This sound has no credit recorded, so there's nothing to add.")
+			return
+		if credit in self.credits_list:
+			self.set_status(f"Already in the credits list, which has {count(len(self.credits_list), 'credit')}.")
+			return
+		self.credits_list.append(credit)
+		save_credits_list(self.credits_list)
+		self.set_status(f"Added to the credits list. It has {count(len(self.credits_list), 'credit')}.")
+
+	def credits_text(self):
+		"""The credits list as text, ready for a game's credits."""
+		return "Sound credits\n\n" + "\n\n".join(self.credits_list) + "\n"
+
+	def on_show_credits(self, event):
+		"""Show the credits list in a box the screen reader can read through."""
+		if not self.credits_list:
+			self.set_status("The credits list is empty. Press Ctrl+K on a sound to add its credit.")
+			return
+		dialog = TextViewDialog(self, "Credits list", f"Credits list, {count(len(self.credits_list), 'credit')}:", self.credits_text())
+		dialog.ShowModal()
+		dialog.Destroy()
+
+	def on_save_credits(self, event):
+		"""Save the credits list to a text file."""
+		if not self.credits_list:
+			self.set_status("The credits list is empty. Press Ctrl+K on a sound to add its credit.")
+			return
+		dialog = wx.FileDialog(
+			self, "Save the credits list", str(Path.home() / "Documents"), "sound credits.txt",
+			wildcard="Text files (*.txt)|*.txt", style=wx.FD_SAVE | wx.FD_OVERWRITE_PROMPT,
+		)
+		if dialog.ShowModal() == wx.ID_OK:
+			Path(dialog.GetPath()).write_text(self.credits_text(), encoding="utf-8")
+			self.set_status(f"Saved {count(len(self.credits_list), 'credit')} to {Path(dialog.GetPath()).name}.")
+		dialog.Destroy()
+
+	def on_clear_credits(self, event):
+		"""Empty the credits list, after asking."""
+		if not self.credits_list:
+			self.set_status("The credits list is already empty.")
+			return
+		if wx.MessageBox(f"Clear all {len(self.credits_list)} credits from the list?", APP_NAME, wx.YES_NO, self) == wx.YES:
+			self.credits_list.clear()
+			save_credits_list(self.credits_list)
+			self.set_status("Credits list cleared.")
+
+	def run_first_setup(self):
+		"""Walk a new user through credentials, library folders and downloads, then offer to index."""
+		if self.indexing or self.lookup_running or self.busy:
+			self.set_status("Wait for the current job to finish first.")
+			return
+		answer = wx.MessageBox(
+			f"Welcome to {APP_NAME}.\n\nThis short setup asks for your Freesound credentials, the folders of sounds you "
+			"want to search, and where downloads go. Everything can be changed later in Settings (F2).\n\n"
+			"Press OK to start, or Cancel to skip.",
+			"Setup", wx.OK | wx.CANCEL, self,
+		)
+		if answer == wx.OK:
+			dialog = CredentialsDialog(self, self.settings)
+			if dialog.ShowModal() == wx.ID_OK:
+				new_id = dialog.id_box.GetValue().strip()
+				if new_id != self.settings["freesound_client_id"]:
+					self.client.forget_sign_in()
+				self.settings["freesound_client_id"] = new_id
+				self.settings["freesound_client_secret"] = dialog.secret_box.GetValue().strip()
+			dialog.Destroy()
+			question = "Add a folder of your own sounds, so you can search it with My library?"
+			while wx.MessageBox(question, "Setup", wx.YES_NO, self) == wx.YES:
+				library = choose_library_folder(self, self.settings)
+				if library:
+					self.settings["libraries"].append(library)
+				question = "Add another folder of sounds?"
+			keep = wx.MessageBox(
+				f"Downloads go in {self.settings['downloads_folder']}. Keep that? Choose No to pick another folder.",
+				"Setup", wx.YES_NO, self,
+			)
+			if keep == wx.NO:
+				folder_dialog = wx.DirDialog(self, "Choose the folder for downloads", self.settings["downloads_folder"])
+				if folder_dialog.ShowModal() == wx.ID_OK:
+					self.settings["downloads_folder"] = folder_dialog.GetPath()
+				folder_dialog.Destroy()
+		app_settings.save(self.settings)
+		self.sound_index = None
+		self.fill_library_choice()
+		self.downloaded_ids = self.read_downloaded_ids()
+		if answer == wx.OK and self.settings["libraries"] and wx.MessageBox(
+			"Index your library now? The sound model downloads once, about 600 MB, and a big library takes a while. "
+			"You can search Freesound meanwhile, and press Ctrl+U to stop.",
+			"Setup", wx.YES_NO, self,
+		) == wx.YES:
+			self.start_indexing()
+		else:
+			self.set_status("Setup finished. Press F1 for the list of keys.")
+		self.search_box.SetFocus()
+
 	def on_open_downloads(self, event):
 		"""Open the downloads folder in the file manager."""
 		self.downloads_folder().mkdir(parents=True, exist_ok=True)
@@ -1780,10 +2248,13 @@ class MainWindow(wx.Frame):
 def main():
 	"""Start the app."""
 	app = wx.App()
+	first_run = not app_settings.SETTINGS_FILE.exists()
 	settings = app_settings.load()
 	pygame.mixer.init(44100)
 	window = MainWindow(settings, FreesoundClient(settings))
 	window.Show()
+	if first_run:
+		wx.CallAfter(window.run_first_setup)
 	app.MainLoop()
 
 

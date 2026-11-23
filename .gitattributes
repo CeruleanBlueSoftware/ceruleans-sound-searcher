@@ -1,0 +1,3 @@
+# Store text files with Unix line endings in the repository; batch files are checked out with Windows ones.
+* text=auto eol=lf
+*.bat text eol=crlf

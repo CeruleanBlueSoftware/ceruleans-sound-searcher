@@ -278,18 +278,68 @@ def notes_from_credit_file(path):
 
 
 def find_sound_files(settings, only=None):
-	"""Every sound file in the library folders (or one folder of them) as {key: path}, skipping Mac leftovers."""
+	"""Every sound file in the library folders, or in one folder or file of them, as {key: path}, skipping Mac leftovers."""
 	files = {}
+	if only and Path(only).is_file():
+		key = app_settings.key_for(settings, only)
+		return {key: Path(only)} if key and is_sound_file(Path(only)) else {}
 	folders = [Path(only)] if only else [Path(library["folder"]) for library in settings["libraries"]]
 	for folder in folders:
 		if not folder.is_dir():
 			continue
 		for path in folder.rglob("*"):
-			if path.suffix.lower() in SOUND_EXTENSIONS and not path.name.startswith("._") and path.is_file():
+			if is_sound_file(path) and path.is_file():
 				key = app_settings.key_for(settings, path)
 				if key:
 					files[key] = path
 	return dict(sorted(files.items()))
+
+
+def is_sound_file(path):
+	"""True for a file with a sound extension that isn't a Mac leftover."""
+	return path.suffix.lower() in SOUND_EXTENSIONS and not path.name.startswith("._")
+
+
+def pending_changes(settings):
+	"""Count the library's sounds that are new or changed since indexing, and those that are gone, as (changed, gone)."""
+	if not Path(settings["index_file"]).exists():
+		return len(find_sound_files(settings)), 0
+	connection = open_database(settings)
+	known = {row[0]: (row[1], row[2]) for row in connection.execute("select path, size, modified from sounds")}
+	connection.close()
+	current = find_sound_files(settings)
+	changed = 0
+	for key, path in current.items():
+		stat = path.stat()
+		if known.get(key) != (stat.st_size, stat.st_mtime):
+			changed += 1
+	return changed, len([key for key in known if key not in current])
+
+
+def backup_index(settings, destination):
+	"""Copy the index safely, even while it's in use, to destination."""
+	source = open_database(settings)
+	target = sqlite3.connect(destination)
+	source.backup(target)
+	target.close()
+	source.close()
+
+
+def check_index_file(path):
+	"""Raise RuntimeError unless path is an index this version can use (or an empty database)."""
+	connection = sqlite3.connect(path)
+	try:
+		tables = {row[0] for row in connection.execute("select name from sqlite_master where type = 'table'")}
+		if tables and "sounds" not in tables:
+			raise RuntimeError(f"{Path(path).name} isn't a sound index.")
+		if "sounds" in tables:
+			has_key_format = "meta" in tables and connection.execute("select value from meta where key = 'key format'").fetchone()
+			if not has_key_format and connection.execute("select count(*) from sounds").fetchone()[0]:
+				raise RuntimeError(f"{Path(path).name} was made by an older version and can't be used.")
+	except sqlite3.DatabaseError as error:
+		raise RuntimeError(f"{Path(path).name} isn't a sound index ({error}).")
+	finally:
+		connection.close()
 
 
 def load_labels(model):
@@ -307,17 +357,21 @@ def describe_duration(seconds):
 	return f"{hours} hours {minutes} minutes" if hours else f"{minutes} minutes"
 
 
-def build_index(settings=None, only=None, report=print):
+def build_index(settings=None, only=None, report=print, should_stop=lambda: False, model=None):
 	"""Index new and changed sounds in the library folders, drop ones that are gone, and write a report.
 
-	only limits the run to one folder; report(text) receives progress messages."""
+	only limits the run to one folder or file; report(text) receives progress messages; should_stop() is
+	checked between sounds; model is an already loaded ClapModel to reuse. Returns (indexed, errors, stopped)."""
 	settings = settings or app_settings.load()
 	started = time.time()
 	connection = open_database(settings)
 	current = find_sound_files(settings, only)
 	known = {row[0]: (row[1], row[2]) for row in connection.execute("select path, size, modified from sounds")}
-	prefix = app_settings.key_for(settings, only) + "/" if only else ""
-	gone = [key for key in known if key.startswith(prefix) and key not in current]
+	if only and Path(only).is_file():
+		gone = []
+	else:
+		prefix = app_settings.key_for(settings, only) + "/" if only else ""
+		gone = [key for key in known if key.startswith(prefix) and key not in current]
 	for key in gone:
 		connection.execute("delete from sounds where path = ?", (key,))
 		connection.execute("delete from pieces where path = ?", (key,))
@@ -338,12 +392,19 @@ def build_index(settings=None, only=None, report=print):
 	connection.commit()
 	report(f"{len(current)} sounds in the library. {len(to_do)} to index, {len(gone)} removed.")
 	errors = []
+	indexed = 0
+	stopped = False
 	if to_do:
-		report("Loading the sound model...")
-		model = ClapModel()
+		if model is None:
+			report("Loading the sound model...")
+			model = ClapModel()
 		label_names, label_embeddings = load_labels(model)
 		for number, (key, path, stat) in enumerate(to_do, 1):
+			if should_stop():
+				stopped = True
+				break
 			error = index_one(connection, model, label_names, label_embeddings, licences, key, path, stat)
+			indexed = number
 			if error:
 				errors.append(f"{key}: {error}")
 			if number % 25 == 0 or number == len(to_do):
@@ -352,9 +413,14 @@ def build_index(settings=None, only=None, report=print):
 				left = elapsed / number * (len(to_do) - number)
 				report(f"{number} of {len(to_do)} done, about {describe_duration(left)} left.")
 	connection.commit()
-	write_report(settings, connection, len(to_do), errors, started)
+	if not only:
+		write_report(settings, connection, indexed, errors, started, stopped)
 	connection.close()
-	report(f"Done. Report written to {report_file(settings)}.")
+	if stopped:
+		report(f"Stopped after {indexed} of {len(to_do)}. Update the index again to carry on.")
+	elif not only:
+		report(f"Done. Report written to {report_file(settings)}.")
+	return indexed, errors, stopped
 
 
 def index_one(connection, model, label_names, label_embeddings, licences, key, path, stat):
@@ -400,7 +466,7 @@ def import_notes(connection, key, path):
 		connection.execute("insert or ignore into notes values (?, ?, ?)", (key, notes, time.strftime("%Y-%m-%d %H:%M")))
 
 
-def write_report(settings, connection, indexed, errors, started):
+def write_report(settings, connection, indexed, errors, started, stopped=False):
 	"""Write the index report: what was indexed, licence counts and any files that couldn't be read."""
 	total = connection.execute("select count(*) from sounds").fetchone()[0]
 	cleared = dict(connection.execute("select cleared, count(*) from sounds group by cleared").fetchall())
@@ -410,7 +476,8 @@ def write_report(settings, connection, indexed, errors, started):
 	lines = [
 		f"Sound index report, {time.strftime('%d %B %Y, %H:%M')}",
 		"",
-		f"Sounds in the index: {total}. Indexed this run: {indexed}, in {describe_duration(time.time() - started)}.",
+		f"Sounds in the index: {total}. Indexed this run: {indexed}, in {describe_duration(time.time() - started)}."
+		+ (" The run was stopped before the end." if stopped else ""),
 		f"Licence cleared for commercial use: {cleared.get('yes', 0)}. Not allowed or source not recorded: {cleared.get('no', 0)}. Licence unknown: {cleared.get('unknown', 0)}.",
 		"",
 	]
@@ -472,7 +539,7 @@ class SoundIndex:
 				self.note_cache[text] = embedding
 		return np.array([self.note_cache[text] for text in texts])
 
-	def search(self, text, limit=50, cleared_only=False, max_duration=None):
+	def search(self, text, limit=50, cleared_only=False, max_duration=None, library=None):
 		"""Find sounds matching a description: notes that share its words first, then by meaning."""
 		query = self.ensure_model().embed_text([text])[0]
 		scores = self.best_scores(query)
@@ -486,20 +553,22 @@ class SoundIndex:
 				bonus = 0.25 * len(words & note_words) / max(1, len(words))
 				index = self.position[path]
 				scores[index] = max(scores[index], float(score)) + bonus
-		return self.ranked(scores, limit, cleared_only, max_duration)
+		return self.ranked(scores, limit, cleared_only, max_duration, library)
 
-	def similar(self, path, limit=50, cleared_only=False, max_duration=None):
+	def similar(self, path, limit=50, cleared_only=False, max_duration=None, library=None):
 		"""Find the sounds closest to a given one."""
 		if path not in self.position:
 			return []
 		scores = self.embeddings @ self.embeddings[self.position[path]]
 		scores[self.position[path]] = -2
-		return self.ranked(scores, limit, cleared_only, max_duration)
+		return self.ranked(scores, limit, cleared_only, max_duration, library)
 
-	def ranked(self, scores, limit, cleared_only, max_duration):
-		"""Turn scores into a list of (score, details) for the best sounds, within the licence and length limits."""
+	def ranked(self, scores, limit, cleared_only, max_duration, library=None):
+		"""Turn scores into a list of (score, details) for the best sounds, within the licence, length and library limits."""
 		results = []
 		for index in np.argsort(-scores):
+			if library and not self.paths[index].startswith(library + "/"):
+				continue
 			details = self.details(self.paths[index])
 			if details.get("full_path") is None:
 				continue
