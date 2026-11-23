@@ -4,6 +4,12 @@ Be True, Be You, Be Blue!
 
 [Cerulean Blue Software](https://ceruleanbluesoftware.com) | [Read me](README.md) | Change log
 
+## Version 0.4.1, 23 November 2026
+
+### Fixed
+
+- The sound model now downloads on a newly installed Windows. It could fail with a certificate error, because the app didn't let Windows fetch the security certificates it hadn't needed yet.
+
 ## Version 0.4.0, 22 November 2026
 
 ### Changed

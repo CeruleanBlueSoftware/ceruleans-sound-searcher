@@ -24,11 +24,12 @@ import wx
 
 os.environ.setdefault("PYGAME_HIDE_SUPPORT_PROMPT", "1")
 import pygame
+import truststore
 
 import settings as app_settings
 
 APP_NAME = "Cerulean's Sound Searcher"
-APP_VERSION = "0.4.0"
+APP_VERSION = "0.4.1"
 USER_AGENT = "CeruleansSoundSearcher/" + APP_VERSION
 
 LIBRARY_PAGE_SIZE = 50
@@ -2309,6 +2310,7 @@ class MainWindow(wx.Frame):
 
 def main():
 	"""Start the app."""
+	truststore.inject_into_ssl()
 	app = wx.App()
 	first_run = not app_settings.SETTINGS_FILE.exists()
 	settings = app_settings.load()

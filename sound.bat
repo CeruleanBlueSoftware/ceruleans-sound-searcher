@@ -12,7 +12,7 @@ echo Step 1 of 3: compiling with Nuitka. This takes a while. Details go in "buil
 "%PYTHON%" -m nuitka --mode=standalone --windows-console-mode=disable --remove-output --assume-yes-for-downloads ^
  "--output-dir=%~dp0dist" "--output-filename=Cerulean's Sound Searcher.exe" ^
  "--windows-icon-from-ico=%~dp0ceruleanBlue.ico" "--company-name=Cerulean Blue Software" ^
- "--product-name=Cerulean's Sound Searcher" --file-version=0.4.0 --product-version=0.4.0 ^
+ "--product-name=Cerulean's Sound Searcher" --file-version=0.4.1 --product-version=0.4.1 ^
  --include-package=accessible_output2 --include-package=_soundfile_data ^
  --include-module=sound_index --include-module=settings --include-module=clap_onnx --include-module=model_download ^
  --nofollow-import-to=torch --nofollow-import-to=transformers --nofollow-import-to=onnx --nofollow-import-to=onnxscript ^

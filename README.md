@@ -30,8 +30,8 @@ Be True, Be You, Be Blue!
 
 Download from the [latest release](https://github.com/CeruleanBlueSoftware/ceruleans-sound-searcher/releases/latest):
 
-- **setup ceruleans sound searcher.exe**, the installer. It installs for you alone, with no administrator prompt, into AppData\Roaming\Cerulean Blue Software\Cerulean's Sound Searcher\program, and adds the program to the Start menu. Uninstalling keeps your settings, index, notes and downloads.
-- **ceruleans sound searcher.zip**, which runs from wherever you extract it. Run "Cerulean's Sound Searcher.exe" from the extracted folder.
+- **setup.ceruleans.sound.searcher.exe**, the installer. It installs for you alone, with no administrator prompt, into AppData\Roaming\Cerulean Blue Software\Cerulean's Sound Searcher\program, and adds the program to the Start menu. Uninstalling keeps your settings, index, notes and downloads.
+- **ceruleans.sound.searcher.zip**, which runs from wherever you extract it. Run "Cerulean's Sound Searcher.exe" from the extracted folder.
 
 You don't need Python to use either.
 
@@ -109,7 +109,7 @@ Settings can also choose a different index file, start a new one, or back up the
 
 ## Status
 
-Version 0.4.0. Install it as described under Installing, or run it from Python as described under Running from source. See the [change log](CHANGELOG.md) for what's new.
+Version 0.4.1. Install it as described under Installing, or run it from Python as described under Running from source. See the [change log](CHANGELOG.md) for what's new.
 
 ## Feedback and contributions
 

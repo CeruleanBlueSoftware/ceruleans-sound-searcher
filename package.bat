@@ -2,7 +2,7 @@
 setlocal
 title Packaging Cerulean's Sound Searcher
 pushd "%~dp0"
-set "VERSION=0.4.0"
+set "VERSION=0.4.1"
 set "DIST=%~dp0dist\sound_searcher.dist"
 set "OUTPUT=%~dp0output"
 set "ZIP=%OUTPUT%\ceruleans sound searcher.zip"

@@ -3,7 +3,7 @@
 
 #define MyAppName "Cerulean's Sound Searcher"
 #ifndef MyAppVersion
-  #define MyAppVersion "0.4.0"
+  #define MyAppVersion "0.4.1"
 #endif
 #define MyAppPublisher "Cerulean Blue Software"
 #define MyAppURL "https://github.com/CeruleanBlueSoftware/ceruleans-sound-searcher"

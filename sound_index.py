@@ -607,6 +607,8 @@ class SoundIndex:
 
 
 if __name__ == "__main__":
+	import truststore
+	truststore.inject_into_ssl()
 	if not model_ready():
 		import model_download
 		print(f"Downloading the sound model, {model_download.download_size_text()}. This happens once.", flush=True)
