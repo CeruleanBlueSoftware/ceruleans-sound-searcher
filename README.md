@@ -82,7 +82,7 @@ Searching your own library works without any credentials.
 
 ## Where your things are kept
 
-Nothing personal is kept in the program folder. Your settings, Freesound credentials and sign-in, the library index and your notes are in AppData\Roaming\Cerulean Blue Software\Cerulean's Sound Searcher. Keep settings.json and oauth_token.json private: they hold your credentials and sign-in.
+Nothing personal is kept in the program folder. Your settings, Freesound credentials and sign-in, the library index and your notes are in AppData\Roaming\Cerulean Blue Software\Cerulean's Sound Searcher. Downloads go in the downloads folder inside it, unless you choose another in Settings; Ctrl+L opens it. Keep settings.json and oauth_token.json private: they hold your credentials and sign-in.
 
 ## Status
 

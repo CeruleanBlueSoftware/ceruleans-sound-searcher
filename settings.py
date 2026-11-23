@@ -27,7 +27,7 @@ def default_settings():
 		"freesound_licences": ["cc0", "by"],
 		"freesound_channels": "any",
 		"freesound_sample_rate": "any",
-		"downloads_folder": str(Path.home() / "Documents" / "Cerulean's Sound Searcher downloads"),
+		"downloads_folder": str(SETTINGS_FOLDER / "downloads"),
 		"libraries": [],
 		"licence_rules": [],
 		"index_file": str(SETTINGS_FOLDER / "sound_index.db"),

@@ -20,7 +20,7 @@ The first public release.
 
 ### Changed
 
-- Settings, the Freesound sign-in, the index and your notes now live in your own AppData folder, never beside the program.
+- Settings, the Freesound sign-in, the index and your notes now live in your own AppData folder, never beside the program. Downloads go in a downloads folder there too, unless you choose another.
 - Freesound searches follow the licence, channel and sample rate choices in Settings, instead of always stereo, 44,100 Hz, CC0 or CC BY.
 - Space plays library sounds from their files; Ctrl+O opens a library sound's folder.
 
